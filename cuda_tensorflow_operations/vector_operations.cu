@@ -41,24 +41,31 @@ void cpu_calculate_array(int* a, int* b, int* c, int* d, const int N, const int 
 int main(void) {
     srand(time(NULL));
 
-    int* a, * b, * c, * d;
+    int* a, * b, * c, * d, * cpu_output;
     int* dev_a, * dev_b, * dev_c, * dev_d;
+    cudaEvent_t start, end;
+    float time = 0.0;
 
-    int N = 3;
-    int M = 4;
+    int N = 4;
+    int M = 3;
+
     a = (int*)malloc(sizeof(int) * N);
     b = (int*)malloc(sizeof(int) * M);
     c = (int*)malloc(sizeof(int) * N * M);
     d = (int*)malloc(sizeof(int) * N * M);
-  
+    cpu_output = (int*)malloc(sizeof(int) * N * M);
+
     init_array(a, N);
     init_array(b, M);
     init_mat(c, N, M);
 
+#ifdef DEBUG
     printf("<<<<<<<<<< initial data:\n");
     print_array(a, N, "a-vector");
     print_array(b, M, "b-vector");
     print_mat(c, N, M, "c-matrix");
+#endif // !DEBUG
+
 
     cudaMalloc((void**)&dev_a, sizeof(int) * N);
     cudaMalloc((void**)&dev_b, sizeof(int) * M);
@@ -69,21 +76,50 @@ int main(void) {
     cudaMemcpy(dev_b, b, sizeof(int) * M, cudaMemcpyHostToDevice);
     cudaMemcpy(dev_c, c, sizeof(int) * N * M, cudaMemcpyHostToDevice);
 
-    printf("\n\nRunning Kernel...\n\n");
-    kernel << <N * M / 256 + 1, 256 >> > (dev_a, dev_b, dev_c, dev_d, N, M);
+    cudaEventCreate(&start);
+    cudaEventCreate(&end);
 
-    printf("Gpu Return with Error Code: %s\n",cudaGetErrorString(cudaGetLastError()));
+#ifdef DEBUG
+    printf("\n\nRunning Kernel...\n\n");
+#endif // DEBUG
+
+    cudaEventRecord(start);
+    kernel << <N * M / 256 + 1, 256 >> > (dev_a, dev_b, dev_c, dev_d, N, M);
+    cudaEventRecord(end);
+    cudaEventSynchronize(end);
+    cudaEventElapsedTime(&time, start, end);
 
     cudaMemcpy(d, dev_d, sizeof(int) * N * M, cudaMemcpyDeviceToHost);
+
+    printf("Gpu Return with Error Code: %s\n", cudaGetErrorString(cudaGetLastError()));
+    printf("\tGPU Time Elapsed: %f ms\n", time);
 
     cudaFree(dev_a);
     cudaFree(dev_b);
     cudaFree(dev_c);
     cudaFree(dev_d);
 
-    printf(">>>>>>>>>> final data:\n");
+    cpu_calculate_array(a, b, c, cpu_output, N, M);
+
+#ifdef DEBUG
+    printf(">>>>>>>>>> Gpu final data:\n");
     print_mat(d, N, M, "d-matrix");
 
+    printf(">>>>>>>>>> Cpu final data:\n");
+    print_mat(cpu_output, N, M, "cpu-matrix");
+#endif // DEBUG
+    auto cpu_start = std::chrono::high_resolution_clock::now();
+    int error = calculate_error(d, cpu_output, N, M);
+    auto cpu_done = std::chrono::high_resolution_clock::now();
+    printf("\tCPU Time Elapsed: %f ms\n", std::chrono::duration_cast<std::chrono::microseconds>(cpu_done - cpu_start).count() / 1000.0);
+
+    printf("Deviation between Cpu and Gpu: %d\n",error);
+
+    free(a);
+    free(b);
+    free(c);
+    free(d);
+    free(cpu_output);
     return 0;
 };
 
